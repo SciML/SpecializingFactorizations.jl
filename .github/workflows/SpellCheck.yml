@@ -1,0 +1,11 @@
+name: SpellCheck
+on:
+  push:
+    branches:
+      - main
+    tags: ['*']
+  pull_request:
+jobs:
+  spellcheck:
+    uses: "SciML/.github/.github/workflows/spellcheck.yml@v1"
+    secrets: "inherit"
