@@ -7,6 +7,9 @@ const GROUP = get(ENV, "GROUP", "All")
         @safetestset "Core" begin
             include("core.jl")
         end
+        @safetestset "SpecializedQR" begin
+            include("specializedqr.jl")
+        end
     end
 
     if GROUP == "All" || GROUP == "QA"
