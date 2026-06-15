@@ -1,5 +1,6 @@
 using SpecializingFactorizations
 using LinearAlgebra
+using Random
 using Test
 
 const SLU = SpecializingFactorizations
@@ -914,6 +915,13 @@ _reltol(::Type{T}) where {T} = (real(T) === Float32 ? 1.0f-3 : 1.0e-8)
         @test structuralform(specializingqr(randn(4, 7))) == GENERAL
     end
 
+    # Fixed seed: the `nondom` draw must stay comfortably full rank so the
+    # conservative laic1 gate accepts the structured form. An unseeded draw can
+    # land on a Float32 tridiagonal with cond ~1e5–1e6, which the gate correctly
+    # declines (routing to geqp3/GENERAL) — the gate is right, but then the
+    # structuralform assertion below no longer holds. This seed keeps the worst
+    # drawn condition number ~1e2, far inside the gate's accept region.
+    Random.seed!(1234)
     @testset "band gate: Varah early-accept and laic1 fallback agree with geqp3: $T" for
         T in (Float64, Float32, ComplexF64, ComplexF32)
 
