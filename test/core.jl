@@ -1,6 +1,7 @@
 using SpecializingFactorizations
 using LinearAlgebra
 using Random
+using StableRNGs
 using Test
 
 const SLU = SpecializingFactorizations
@@ -530,6 +531,10 @@ end
 # correct-typed random matrix/vector, and an exact-rank-r factor product.
 _qrand(::Type{T}, dims...) where {T <: Complex} = T.(complex.(randn(dims...), randn(dims...)))
 _qrand(::Type{T}, dims...) where {T <: Real} = T.(randn(dims...))
+# RNG-explicit variants: pass a StableRNG to get a stream that is identical
+# across Julia versions (the stdlib RNG stream is not version-stable).
+_qrand(rng::AbstractRNG, ::Type{T}, dims...) where {T <: Complex} = T.(complex.(randn(rng, dims...), randn(rng, dims...)))
+_qrand(rng::AbstractRNG, ::Type{T}, dims...) where {T <: Real} = T.(randn(rng, dims...))
 _lowrank(::Type{T}, m, n, r) where {T} = _qrand(T, m, r) * _qrand(T, r, n)
 _reltol(::Type{T}) where {T} = (real(T) === Float32 ? 1.0f-3 : 1.0e-8)
 
@@ -915,37 +920,40 @@ _reltol(::Type{T}) where {T} = (real(T) === Float32 ? 1.0f-3 : 1.0e-8)
         @test structuralform(specializingqr(randn(4, 7))) == GENERAL
     end
 
-    # Fixed seed: the `nondom` draw must stay comfortably full rank so the
-    # conservative laic1 gate accepts the structured form. An unseeded draw can
-    # land on a Float32 tridiagonal with cond ~1e5–1e6, which the gate correctly
-    # declines (routing to geqp3/GENERAL) — the gate is right, but then the
-    # structuralform assertion below no longer holds. This seed keeps the worst
-    # drawn condition number ~1e2, far inside the gate's accept region.
-    Random.seed!(1234)
+    # Deterministic, version-stable input: the `nondom` draw must stay comfortably
+    # full rank so the conservative laic1 gate accepts the structured form. An
+    # unseeded draw can land on a Float32 tridiagonal with cond ~1e5–1e6, which the
+    # gate correctly declines (routing to geqp3/GENERAL) — the gate is right, but
+    # then the structuralform assertion below no longer holds. Drawing from a
+    # `StableRNG` with a fixed seed pins these matrices to a verified
+    # well-conditioned sample (worst drawn cond ~1e2, far inside the gate's accept
+    # region) identically on every Julia version; the stdlib RNG stream is not
+    # version-stable, so a stdlib seed could regress on a future Julia.
     @testset "band gate: Varah early-accept and laic1 fallback agree with geqp3: $T" for
         T in (Float64, Float32, ComplexF64, ComplexF32)
 
         rt = _reltol(T)
         n = 16
+        rng = StableRNG(1234)
         # strongly diagonally dominant ⇒ the O(n)/O(n·b) Varah early-accept fires
         # (no laic1 sweep); NOT diagonally dominant but still full rank ⇒ Varah
         # declines and the O(n²) laic1 gate accepts. Both must equal geqp3/pinv.
         for (kl, ku) in ((1, 1), (2, 2))
-            dl = T[_qrand(T, 1)[1] for _ in 1:(n - 1)]
-            dom = Matrix(Tridiagonal(dl .* T(0.2), T[_qrand(T, 1)[1] + T(8) for _ in 1:n], dl .* T(0.2)))
+            dl = T[_qrand(rng, T, 1)[1] for _ in 1:(n - 1)]
+            dom = Matrix(Tridiagonal(dl .* T(0.2), T[_qrand(rng, T, 1)[1] + T(8) for _ in 1:n], dl .* T(0.2)))
             if kl == 2
                 dom = dom + diagm(2 => fill(T(0.1), n - 2), -2 => fill(T(0.1), n - 2))
             end
             # off-diagonals larger than the diagonal ⇒ not diagonally dominant
             nondom = Matrix(
                 Tridiagonal(
-                    T[_qrand(T, 1)[1] + T(3) for _ in 1:(n - 1)],
-                    T[_qrand(T, 1)[1] * T(0.5) for _ in 1:n],
-                    T[_qrand(T, 1)[1] + T(3) for _ in 1:(n - 1)],
+                    T[_qrand(rng, T, 1)[1] + T(3) for _ in 1:(n - 1)],
+                    T[_qrand(rng, T, 1)[1] * T(0.5) for _ in 1:n],
+                    T[_qrand(rng, T, 1)[1] + T(3) for _ in 1:(n - 1)],
                 )
             )
             for A in (dom, nondom)
-                b = _qrand(T, n)
+                b = _qrand(rng, T, n)
                 F = specializingqr(A)
                 Fg = specializingqr(A; detect_structure = false)
                 @test structuralform(F) in (TRIDIAGONAL, BANDED)
