@@ -1,7 +1,8 @@
 module SpecializingFactorizations
 
-using LinearAlgebra
-using LinearAlgebra: BlasFloat, BlasInt
+import LinearAlgebra
+using LinearAlgebra: BlasFloat, BlasInt, BunchKaufman, ColumnNorm, LU,
+    LowerTriangular, UpperTriangular, det, issuccess, ldiv!, lu!, qr, rank
 using LinearAlgebra.LAPACK: potrf!, potrs!, sytrs!, hetrs!, chkargsok
 using LinearAlgebra.BLAS: @blasfunc, libblastrampoline
 using PrecompileTools: @setup_workload, @compile_workload
