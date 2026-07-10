@@ -14,6 +14,21 @@ live here:
   returns the least-squares / minimum-norm solution for any shape, **including
   singular and rank-deficient** matrices, without ever throwing.
 
+## Public API
+
+The public API is:
+
+- Matrix-form taxonomy: `MatrixForm`, `GENERAL`, `DIAGONAL`, `LOWER_TRIANGULAR`,
+  `UPPER_TRIANGULAR`, `LOWER_BIDIAGONAL`, `UPPER_BIDIAGONAL`, `TRIDIAGONAL`,
+  `BANDED`, `SYMMETRIC_POSITIVE_DEFINITE`, `SYMMETRIC_INDEFINITE`, and
+  `HERMITIAN_INDEFINITE`.
+- LU detection and workspace API: `DetectionResult`, `detect_form`,
+  `SpecializedLU`, `specializinglu`, `specializinglu!`, `reserve!`,
+  `matrixform`, `isfactored`, and `issuccess`.
+- QR status and workspace API: `QRStatus`, `QR_UNFACTORED`, `QR_FULLRANK`,
+  `QR_DEFICIENT`, `SpecializedQR`, `specializingqr`, `specializingqr!`, and
+  `structuralform`.
+
 The LU solver: a **type-stable**, single-workspace dense linear solver that
 cheaply detects whether a dense matrix actually has special structure and, if
 so, solves with the *specialized* factorization for that structure instead of a

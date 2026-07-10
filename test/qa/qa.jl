@@ -1,5 +1,7 @@
 using SciMLTesting, SpecializingFactorizations, Test
 
+include("public_api_docs.jl")
+
 run_qa(
     SpecializingFactorizations;
     explicit_imports = true,
