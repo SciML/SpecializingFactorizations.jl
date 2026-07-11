@@ -1,4 +1,4 @@
-using SciMLTesting, SpecializingFactorizations, Test
+using SciMLTesting, SpecializingFactorizations
 
 run_qa(
     SpecializingFactorizations;

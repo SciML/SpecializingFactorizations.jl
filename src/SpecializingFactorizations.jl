@@ -51,6 +51,81 @@ attempt decides definiteness) and only for `BlasFloat` element types.
     HERMITIAN_INDEFINITE = 10
 end
 
+@doc """
+    GENERAL::MatrixForm
+
+Unstructured dense matrix form. LU workspaces use a general dense LU fallback
+unless `fallback_lu = false`; QR workspaces use the dense rank-revealing path.
+""" GENERAL
+
+@doc """
+    DIAGONAL::MatrixForm
+
+Diagonal matrix form detected when both lower and upper bandwidths are zero.
+Solves reduce to independent elementwise divisions.
+""" DIAGONAL
+
+@doc """
+    LOWER_TRIANGULAR::MatrixForm
+
+Lower-triangular matrix form detected when the upper bandwidth is zero.
+""" LOWER_TRIANGULAR
+
+@doc """
+    UPPER_TRIANGULAR::MatrixForm
+
+Upper-triangular matrix form detected when the lower bandwidth is zero.
+""" UPPER_TRIANGULAR
+
+@doc """
+    LOWER_BIDIAGONAL::MatrixForm
+
+Lower-bidiagonal matrix form detected when only the diagonal and first
+subdiagonal can be nonzero.
+""" LOWER_BIDIAGONAL
+
+@doc """
+    UPPER_BIDIAGONAL::MatrixForm
+
+Upper-bidiagonal matrix form detected when only the diagonal and first
+superdiagonal can be nonzero.
+""" UPPER_BIDIAGONAL
+
+@doc """
+    TRIDIAGONAL::MatrixForm
+
+Tridiagonal matrix form detected when the lower and upper bandwidths are both
+one.
+""" TRIDIAGONAL
+
+@doc """
+    BANDED::MatrixForm
+
+Narrow-banded matrix form detected when the combined bandwidth is within the
+configured `bandwidth_cutoff`.
+""" BANDED
+
+@doc """
+    SYMMETRIC_POSITIVE_DEFINITE::MatrixForm
+
+Resolved symmetric positive-definite form selected after a successful Cholesky
+factorization attempt.
+""" SYMMETRIC_POSITIVE_DEFINITE
+
+@doc """
+    SYMMETRIC_INDEFINITE::MatrixForm
+
+Resolved symmetric indefinite form selected when a symmetric matrix is not
+positive definite and is routed to Bunch-Kaufman factorization.
+""" SYMMETRIC_INDEFINITE
+
+@doc """
+    HERMITIAN_INDEFINITE::MatrixForm
+
+Resolved Hermitian indefinite form selected when a Hermitian matrix is not
+positive definite and is routed to Hermitian Bunch-Kaufman factorization.
+""" HERMITIAN_INDEFINITE
+
 # ---------------------------------------------------------------------------
 # Detection
 # ---------------------------------------------------------------------------
@@ -330,6 +405,20 @@ for (fname, elty) in (
     end
 end
 
+"""
+    matrixform(F::SpecializedLU) -> MatrixForm
+
+Return the structural [`MatrixForm`](@ref) detected for the LU workspace.
+
+# Examples
+
+```julia
+using SpecializingFactorizations
+
+F = specializinglu([1.0 0.0; 0.0 2.0])
+matrixform(F) == DIAGONAL
+```
+"""
 matrixform(F::SpecializedLU) = F.form
 LinearAlgebra.issuccess(F::SpecializedLU) = F.factored && F.info == 0
 
@@ -1243,6 +1332,27 @@ left unfactored (`fallback = false`) for the host to own.
     QR_DEFICIENT = 2
 end
 
+@doc """
+    QR_UNFACTORED::QRStatus
+
+QR workspace status used when the input is deliberately left unfactored for the
+host to handle, for example with `fallback = false`.
+""" QR_UNFACTORED
+
+@doc """
+    QR_FULLRANK::QRStatus
+
+QR workspace status for full-column-rank problems, where the solve uses the
+leading triangular `R` factor.
+""" QR_FULLRANK
+
+@doc """
+    QR_DEFICIENT::QRStatus
+
+QR workspace status for rank-deficient or underdetermined problems, where the
+solve uses the deficient-rank path.
+""" QR_DEFICIENT
+
 """
     SpecializedQR{T,R}
 
@@ -1299,6 +1409,23 @@ function SpecializedQR{T}() where {T}
     )
 end
 
+"""
+    matrixform(F::SpecializedQR) -> QRStatus
+
+Return the rank status [`QRStatus`](@ref) selected for the QR workspace.
+
+Use [`structuralform`](@ref) when you need the structural [`MatrixForm`](@ref)
+used internally for square structured fast paths.
+
+# Examples
+
+```julia
+using SpecializingFactorizations
+
+F = specializingqr([1.0 0.0; 0.0 1.0; 1.0 1.0])
+matrixform(F) == QR_FULLRANK
+```
+"""
 matrixform(F::SpecializedQR) = F.status
 
 """
