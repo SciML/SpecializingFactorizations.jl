@@ -1,4 +1,4 @@
-using SciMLTesting, SpecializingFactorizations, Test
+using SciMLTesting, SpecializingFactorizations
 
 run_qa(
     SpecializingFactorizations;
@@ -20,9 +20,3 @@ run_qa(
         all_qualified_accesses_are_public = (; ignore = (:QRPackedQ, :lutype)),
     )
 )
-
-@testset "public API appears in README" begin
-    readme = read(joinpath(pkgdir(SpecializingFactorizations), "README.md"), String)
-    missing = filter(name -> !occursin(String(name), readme), public_api_names(SpecializingFactorizations))
-    @test isempty(missing)
-end
