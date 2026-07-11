@@ -4,9 +4,6 @@ SciMLTesting = "09d9d899-5365-40a9-917a-5f67fddea283"
 SpecializingFactorizations = "fa08b7a1-13d3-4faf-875d-5cbc1520e3f3"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
-[sources]
-SpecializingFactorizations = {path = "/home/crackauc/sandbox/tmp_20260708_051717_3275/repos/SpecializingFactorizations.jl"}
-
 [compat]
 Aqua = "0.8"
 SciMLTesting = "2.1"
