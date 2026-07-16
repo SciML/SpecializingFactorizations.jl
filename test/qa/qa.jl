@@ -2,6 +2,7 @@ using SciMLTesting, SpecializingFactorizations
 
 run_qa(
     SpecializingFactorizations;
+    api_docs_kwargs = (; rendered = true),
     explicit_imports = true,
     ei_kwargs = (;
         # libblastrampoline's owner is libblastrampoline_jll; the package
