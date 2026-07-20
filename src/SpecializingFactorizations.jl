@@ -420,6 +420,14 @@ matrixform(F) == DIAGONAL
 ```
 """
 matrixform(F::SpecializedLU) = F.form
+
+"""
+    issuccess(F::SpecializedLU) -> Bool
+
+Return whether `F` holds a successfully computed LU-style factorization. This is
+`false` for singular factorizations and for an unfactored `GENERAL` matrix left
+to the host by `fallback_lu = false`.
+"""
 LinearAlgebra.issuccess(F::SpecializedLU) = F.factored && F.info == 0
 
 """
@@ -1440,9 +1448,23 @@ and `detect_structure = false` inputs). Introspection only — the solve,
 """
 structuralform(F::SpecializedQR) = F.form
 LinearAlgebra.rank(F::SpecializedQR) = F.rank
-# Rank deficiency is a valid minimum-norm solve, not a failure: only a LAPACK
-# illegal-argument (info ≠ 0) or an unfactored workspace is unsuccessful.
+
+"""
+    issuccess(F::SpecializedQR) -> Bool
+
+Return whether `F` holds a usable QR factorization. Rank deficiency is a valid
+minimum-norm solve, not a failure; only a LAPACK illegal argument (`info != 0`)
+or an unfactored workspace makes this `false`.
+"""
 LinearAlgebra.issuccess(F::SpecializedQR) = F.factored && F.info == 0
+
+"""
+    isfactored(F::SpecializedQR) -> Bool
+
+Whether `F` actually holds a QR factorization. `false` means the workspace was
+left unfactored because `specializingqr` or `specializingqr!` was called with
+`fallback = false`, so the host is expected to supply its own QR path.
+"""
 isfactored(F::SpecializedQR) = F.factored
 Base.size(F::SpecializedQR) = (F.m, F.n)
 Base.size(F::SpecializedQR, i::Integer) = i == 1 ? F.m : (i == 2 ? F.n : 1)

@@ -2,7 +2,6 @@ using SciMLTesting, SpecializingFactorizations
 
 run_qa(
     SpecializingFactorizations;
-    explicit_imports = true,
     ei_kwargs = (;
         # libblastrampoline's owner is libblastrampoline_jll; the package
         # legitimately ccalls it via LinearAlgebra.BLAS.

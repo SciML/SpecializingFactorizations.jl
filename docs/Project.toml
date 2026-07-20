@@ -1,0 +1,6 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+SpecializingFactorizations = "fa08b7a1-13d3-4faf-875d-5cbc1520e3f3"
+
+[compat]
+Documenter = "1"
