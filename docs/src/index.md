@@ -20,7 +20,7 @@ SpecializedLU{T}(n::Integer; kl, ku, symmetric) where {T}
 reserve!
 matrixform(F::SpecializedLU)
 isfactored(F::SpecializedLU)
-issuccess(F::SpecializedLU)
+LinearAlgebra.issuccess(::SpecializedLU)
 specializinglu
 specializinglu!
 LinearAlgebra.ldiv!(::AbstractVecOrMat, ::SpecializedLU, ::AbstractVecOrMat)
@@ -33,7 +33,7 @@ SpecializedQR{T}(m::Integer, n::Integer; deficient, nrhs, kl, ku) where {T}
 matrixform(F::SpecializedQR)
 structuralform
 isfactored(F::SpecializedQR)
-issuccess(F::SpecializedQR)
+LinearAlgebra.issuccess(::SpecializedQR)
 specializingqr
 specializingqr!
 LinearAlgebra.ldiv!(::AbstractVecOrMat, ::SpecializedQR, ::AbstractVecOrMat)
