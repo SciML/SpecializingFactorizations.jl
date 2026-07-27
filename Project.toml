@@ -1,18 +1,20 @@
 name = "SpecializingFactorizations"
 uuid = "fa08b7a1-13d3-4faf-875d-5cbc1520e3f3"
 authors = ["Chris Rackauckas <accounts@chrisrackauckas.com> and contributors"]
-version = "0.1.4"
+version = "0.2.0"
 
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+libblastrampoline_jll = "8e850b90-86db-534c-a0d3-1478176c7d93"
 
 [compat]
 LinearAlgebra = "1"
 PrecompileTools = "1.1.0"
+libblastrampoline_jll = "5"
 Random = "1"
 SafeTestsets = "0.1, 1"
-SciMLTesting = "2.1"
+SciMLTesting = "2.4"
 StableRNGs = "1"
 Test = "1"
 julia = "1.10"

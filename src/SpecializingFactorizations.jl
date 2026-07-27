@@ -1,20 +1,102 @@
 module SpecializingFactorizations
 
 import LinearAlgebra
-using LinearAlgebra: BlasFloat, BlasInt, BunchKaufman, ColumnNorm, LU,
-    LowerTriangular, UpperTriangular, det, issuccess, ldiv!, lu!, qr, rank
-using LinearAlgebra.LAPACK: potrf!, potrs!, sytrs!, hetrs!, chkargsok
-using LinearAlgebra.BLAS: @blasfunc, libblastrampoline
+using LinearAlgebra: BunchKaufman, ColumnNorm, LU, LowerTriangular, UpperTriangular,
+    det, ldiv!, lu!, qr, rank
 using PrecompileTools: @setup_workload, @compile_workload
+import libblastrampoline_jll
 
 export MatrixForm,
     GENERAL, DIAGONAL, LOWER_TRIANGULAR, UPPER_TRIANGULAR,
     LOWER_BIDIAGONAL, UPPER_BIDIAGONAL, TRIDIAGONAL, BANDED,
     SYMMETRIC_POSITIVE_DEFINITE, SYMMETRIC_INDEFINITE, HERMITIAN_INDEFINITE
 export SpecializedLU, specializinglu, specializinglu!, reserve!, detect_form, DetectionResult,
-    matrixform, issuccess, isfactored
+    matrixform, isfactored
 export QRStatus, QR_UNFACTORED, QR_FULLRANK, QR_DEFICIENT
 export SpecializedQR, specializingqr, specializingqr!, structuralform
+
+const BlasFloat = Union{Float32, Float64, ComplexF32, ComplexF64}
+const BlasInt = Int
+const _LBT = libblastrampoline_jll.libblastrampoline
+
+macro lbtfunc(name)
+    name = name isa QuoteNode ? name.value : name
+    name isa Symbol || error("@lbtfunc requires a literal LAPACK symbol")
+    return QuoteNode(Symbol(string(name), "64_"))
+end
+
+@inline function _check_lapack_info(info::Integer)
+    info < 0 && throw(ArgumentError("LAPACK reported illegal argument $(-info)"))
+    return nothing
+end
+
+for (fname, elty) in (
+        (:dpotrf_, :Float64), (:spotrf_, :Float32),
+        (:zpotrf_, :ComplexF64), (:cpotrf_, :ComplexF32),
+    )
+    @eval function _potrf!(uplo::AbstractChar, A::AbstractMatrix{$elty})
+        n = size(A, 1)
+        info = Ref{BlasInt}()
+        lda = max(1, stride(A, 2))
+        ccall(
+            (@lbtfunc($fname), _LBT), Cvoid,
+            (Ref{UInt8}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ref{BlasInt}, Clong),
+            uplo, n, A, lda, info, 1,
+        )
+        _check_lapack_info(info[])
+        return Int(info[])
+    end
+end
+
+for (fname, elty) in (
+        (:dpotrs_, :Float64), (:spotrs_, :Float32),
+        (:zpotrs_, :ComplexF64), (:cpotrs_, :ComplexF32),
+    )
+    @eval function _potrs!(uplo::AbstractChar, A::AbstractMatrix{$elty}, B::AbstractVecOrMat{$elty})
+        n = size(A, 1)
+        nrhs = B isa AbstractVector ? 1 : size(B, 2)
+        info = Ref{BlasInt}()
+        lda = max(1, stride(A, 2))
+        ldb = B isa AbstractVector ? max(1, length(B)) : max(1, stride(B, 2))
+        ccall(
+            (@lbtfunc($fname), _LBT), Cvoid,
+            (
+                Ref{UInt8}, Ref{BlasInt}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt},
+                Ptr{$elty}, Ref{BlasInt}, Ref{BlasInt}, Clong,
+            ),
+            uplo, n, nrhs, A, lda, B, ldb, info, 1,
+        )
+        _check_lapack_info(info[])
+        return B
+    end
+end
+
+for (fname, elty, kernel) in (
+        (:dsytrs_, :Float64, :_sytrs!), (:ssytrs_, :Float32, :_sytrs!),
+        (:zsytrs_, :ComplexF64, :_sytrs!), (:csytrs_, :ComplexF32, :_sytrs!),
+        (:zhetrs_, :ComplexF64, :_hetrs!), (:chetrs_, :ComplexF32, :_hetrs!),
+    )
+    @eval function $kernel(
+            uplo::AbstractChar, A::AbstractMatrix{$elty}, ipiv::Vector{Int},
+            B::AbstractVecOrMat{$elty}
+        )
+        n = size(A, 1)
+        nrhs = B isa AbstractVector ? 1 : size(B, 2)
+        info = Ref{BlasInt}()
+        lda = max(1, stride(A, 2))
+        ldb = B isa AbstractVector ? max(1, length(B)) : max(1, stride(B, 2))
+        ccall(
+            (@lbtfunc($fname), _LBT), Cvoid,
+            (
+                Ref{UInt8}, Ref{BlasInt}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt},
+                Ptr{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ref{BlasInt}, Clong,
+            ),
+            uplo, n, nrhs, A, lda, ipiv, B, ldb, info, 1,
+        )
+        _check_lapack_info(info[])
+        return B
+    end
+end
 
 # ---------------------------------------------------------------------------
 # Matrix form taxonomy
@@ -51,75 +133,75 @@ attempt decides definiteness) and only for `BlasFloat` element types.
     HERMITIAN_INDEFINITE = 10
 end
 
-@doc """
+"""
     GENERAL::MatrixForm
 
 Unstructured dense matrix form. LU workspaces use a general dense LU fallback
 unless `fallback_lu = false`; QR workspaces use the dense rank-revealing path.
 """ GENERAL
 
-@doc """
+"""
     DIAGONAL::MatrixForm
 
 Diagonal matrix form detected when both lower and upper bandwidths are zero.
 Solves reduce to independent elementwise divisions.
 """ DIAGONAL
 
-@doc """
+"""
     LOWER_TRIANGULAR::MatrixForm
 
 Lower-triangular matrix form detected when the upper bandwidth is zero.
 """ LOWER_TRIANGULAR
 
-@doc """
+"""
     UPPER_TRIANGULAR::MatrixForm
 
 Upper-triangular matrix form detected when the lower bandwidth is zero.
 """ UPPER_TRIANGULAR
 
-@doc """
+"""
     LOWER_BIDIAGONAL::MatrixForm
 
 Lower-bidiagonal matrix form detected when only the diagonal and first
 subdiagonal can be nonzero.
 """ LOWER_BIDIAGONAL
 
-@doc """
+"""
     UPPER_BIDIAGONAL::MatrixForm
 
 Upper-bidiagonal matrix form detected when only the diagonal and first
 superdiagonal can be nonzero.
 """ UPPER_BIDIAGONAL
 
-@doc """
+"""
     TRIDIAGONAL::MatrixForm
 
 Tridiagonal matrix form detected when the lower and upper bandwidths are both
 one.
 """ TRIDIAGONAL
 
-@doc """
+"""
     BANDED::MatrixForm
 
 Narrow-banded matrix form detected when the combined bandwidth is within the
 configured `bandwidth_cutoff`.
 """ BANDED
 
-@doc """
+"""
     SYMMETRIC_POSITIVE_DEFINITE::MatrixForm
 
 Resolved symmetric positive-definite form selected after a successful Cholesky
 factorization attempt.
 """ SYMMETRIC_POSITIVE_DEFINITE
 
-@doc """
+"""
     SYMMETRIC_INDEFINITE::MatrixForm
 
 Resolved symmetric indefinite form selected when a symmetric matrix is not
 positive definite and is routed to Bunch-Kaufman factorization.
 """ SYMMETRIC_INDEFINITE
 
-@doc """
+"""
     HERMITIAN_INDEFINITE::MatrixForm
 
 Resolved Hermitian indefinite form selected when a Hermitian matrix is not
@@ -139,6 +221,15 @@ one of the resolved symmetric forms — those require the factorization).
 `kl`/`ku` are the detected lower/upper bandwidths, and `issym`/`isherm`
 flag exact symmetry/Hermitian-ness (relevant only when `form == GENERAL`,
 signalling that a Cholesky/Bunch-Kaufman specialization may apply).
+
+# Fields
+
+- `form`: The detected structural [`MatrixForm`](@ref), excluding resolved
+  symmetric forms.
+- `kl`: Number of potentially nonzero subdiagonals.
+- `ku`: Number of potentially nonzero superdiagonals.
+- `issym`: Whether `A == transpose(A)` exactly.
+- `isherm`: Whether `A == adjoint(A)` exactly.
 """
 struct DetectionResult
     form::MatrixForm
@@ -165,6 +256,28 @@ symmetric / Hermitian, so a dense symmetric matrix can later be routed to
 Cholesky or Bunch–Kaufman. A matrix is classified `BANDED` only when its
 band is genuinely narrow (`kl + ku + 1 <= bandwidth_cutoff`); wider bands
 fall through to the symmetric/general dense path.
+
+# Arguments
+
+- `A`: Square matrix to inspect. Entries are read but never mutated.
+
+# Keywords
+
+- `bandwidth_cutoff`: Largest total band width (`kl + ku + 1`) classified as
+  [`BANDED`](@ref). The default, `max(16, n \u00f7 4)`, scales with matrix size.
+
+# Returns
+
+A [`DetectionResult`](@ref) containing the structural form, bandwidths, and
+exact symmetry flags.
+
+# Examples
+
+```julia
+using SpecializingFactorizations
+
+detect_form([1.0 0.0; 0.0 2.0]).form == DIAGONAL
+```
 """
 function detect_form(A::AbstractMatrix; bandwidth_cutoff::Integer = -1)
     m, n = size(A)
@@ -298,6 +411,21 @@ buffer when a new matrix needs more space than the last.
 
 `T` is the element type; `R = real(T)` is used for the real diagonal that the
 positive-definite tridiagonal routines require.
+
+# Fields
+
+- `form`: Active [`MatrixForm`](@ref) and therefore the stored factorization.
+- `n`, `kl`, `ku`: Current matrix size and detected lower/upper bandwidths.
+- `uplo`: LAPACK triangle selector for triangular and symmetric factors.
+- `issym`, `isherm`: Exact symmetry facts captured during detection.
+- `info`: Zero for a successful factorization; otherwise the first singular
+  pivot or LAPACK status.
+- `factored`: Whether this workspace contains a factorization. It is `false`
+  only after `fallback_lu = false` leaves a general matrix to the caller.
+- `fact`, `ipiv`, `dvec`, `dl`, `du`, `du2`, `band`, `work`: Reusable private
+  storage for the dense, structured, banded, and LAPACK factor paths. Their
+  contents are implementation details; inspect the public query functions
+  instead of relying on a particular buffer layout.
 """
 mutable struct SpecializedLU{T, R}
     form::MatrixForm
@@ -392,7 +520,7 @@ for (fname, elty) in (
         info = Ref{BlasInt}()
         lda = max(1, stride(C, 2))
         ccall(
-            (@blasfunc($fname), libblastrampoline), Cvoid,
+            (@lbtfunc($fname), _LBT), Cvoid,
             (
                 Ref{UInt8}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt},
                 Ptr{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ref{BlasInt}, Clong,
@@ -422,7 +550,7 @@ matrixform(F) == DIAGONAL
 matrixform(F::SpecializedLU) = F.form
 
 """
-    issuccess(F::SpecializedLU) -> Bool
+    LinearAlgebra.issuccess(F::SpecializedLU) -> Bool
 
 Return whether `F` holds a successfully computed LU-style factorization. This is
 `false` for singular factorizations and for an unfactored `GENERAL` matrix left
@@ -541,12 +669,10 @@ value-level choice, which is why that choice must stay on the host side.)
 """
 function specializinglu(A::AbstractMatrix{T}; kwargs...) where {T}
     # Factorizing in place needs a field, so integer element types must be
-    # promoted (an `Int` can't hold a fractional pivot). `LinearAlgebra.lutype`
-    # is exactly the promotion `lu`/`\` apply: `Int`→Float64 but `Rational`,
-    # `BigFloat`, `Dual`, etc. left untouched — so a rational solve stays exact
-    # rather than being silently widened to Float64. It is a compile-time
-    # constant, so this stays type-stable and copy-free for already-field inputs.
-    S = LinearAlgebra.lutype(T)
+    # promoted (an `Int` can't hold a fractional pivot). Division gives the
+    # same scalar promotion as `lu`/`\`: `Int`→Float64 while `Rational`,
+    # `BigFloat`, and dual values retain their native arithmetic.
+    S = typeof(zero(T) / one(T))
     F = SpecializedLU{S}()
     Af = S === T ? A : convert(AbstractMatrix{S}, A)
     return specializinglu!(F, Af; kwargs...)
@@ -832,26 +958,26 @@ for (fname, kernel, elty) in (
         info = Ref{BlasInt}()
         lda = max(1, stride(C, 2))
         ccall(
-            (@blasfunc($fname), libblastrampoline), Cvoid,
+            (@lbtfunc($fname), _LBT), Cvoid,
             (
                 Ref{UInt8}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt},
                 Ptr{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ref{BlasInt}, Clong,
             ),
             uplo, n, C, lda, ipiv, work, BlasInt(-1), info, 1
         )
-        chkargsok(info[])
+        _check_lapack_info(info[])
         lwork = BlasInt(real(work[1]))
         length(F.work) < lwork && _resize!(F.work, Int(lwork))
         work = F.work
         ccall(
-            (@blasfunc($fname), libblastrampoline), Cvoid,
+            (@lbtfunc($fname), _LBT), Cvoid,
             (
                 Ref{UInt8}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt},
                 Ptr{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ref{BlasInt}, Clong,
             ),
             uplo, n, C, lda, ipiv, work, lwork, info, 1
         )
-        chkargsok(info[])
+        _check_lapack_info(info[])
         F.info = Int(info[])
         return F
     end
@@ -873,7 +999,7 @@ function _factorize_general!(
         C = _ensure_fact!(F, n)
         copyto!(C, A)
         F.uplo = 'U'
-        _, info = potrf!('U', C)
+        info = _potrf!('U', C)
         if info == 0
             F.form = SYMMETRIC_POSITIVE_DEFINITE
             return F
@@ -937,11 +1063,11 @@ for (gname, elty) in (
         info = Ref{BlasInt}()
         lda = max(1, stride(C, 2))
         ccall(
-            (@blasfunc($gname), libblastrampoline), Cvoid,
+            (@lbtfunc($gname), _LBT), Cvoid,
             (Ref{BlasInt}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ptr{BlasInt}, Ref{BlasInt}),
             n, n, C, lda, ipiv, info
         )
-        chkargsok(info[])
+        _check_lapack_info(info[])
         F.info = Int(info[])
         return F
     end
@@ -1213,21 +1339,21 @@ end
 # symmetric positive definite (Cholesky)
 function _solve_posdef!(x, F::SpecializedLU{T}, b) where {T <: BlasFloat}
     x === b || copyto!(x, b)
-    potrs!(F.uplo, _factmat(F), x)
+    _potrs!(F.uplo, _factmat(F), x)
     return x
 end
 
 # symmetric indefinite (Bunch-Kaufman, sytrf)
 function _solve_symmetric!(x, F::SpecializedLU{T}, b) where {T <: BlasFloat}
     x === b || copyto!(x, b)
-    sytrs!(F.uplo, _factmat(F), F.ipiv, x)
+    _sytrs!(F.uplo, _factmat(F), F.ipiv, x)
     return x
 end
 
 # Hermitian indefinite (hetrf)
 function _solve_hermitian!(x, F::SpecializedLU{T}, b) where {T <: BlasFloat}
     x === b || copyto!(x, b)
-    hetrs!(F.uplo, _factmat(F), F.ipiv, x)
+    _hetrs!(F.uplo, _factmat(F), F.ipiv, x)
     return x
 end
 
@@ -1340,21 +1466,21 @@ left unfactored (`fallback = false`) for the host to own.
     QR_DEFICIENT = 2
 end
 
-@doc """
+"""
     QR_UNFACTORED::QRStatus
 
 QR workspace status used when the input is deliberately left unfactored for the
 host to handle, for example with `fallback = false`.
 """ QR_UNFACTORED
 
-@doc """
+"""
     QR_FULLRANK::QRStatus
 
 QR workspace status for full-column-rank problems, where the solve uses the
 leading triangular `R` factor.
 """ QR_FULLRANK
 
-@doc """
+"""
     QR_DEFICIENT::QRStatus
 
 QR workspace status for rank-deficient or underdetermined problems, where the
@@ -1374,6 +1500,21 @@ solve path at runtime.
 full column rank, and the minimum-norm least-squares solution (matching
 `qr(A, ColumnNorm()) \\ b` and `pinv(A)*b`) when rank-deficient — never
 throwing on singular input. `T` is the element type; `R = real(T)`.
+
+# Fields
+
+- `status`: Current [`QRStatus`](@ref), distinguishing full-rank, deficient,
+  and deliberately unfactored workspaces.
+- `form`: [`MatrixForm`](@ref) selected for a square structured fast path, or
+  `GENERAL` for rank-revealing QR.
+- `m`, `n`, `kl`, `ku`, `rank`, `info`, `factored`, `minnorm`, `rtol`: Problem
+  dimensions, structural metadata, numerical rank/status, factorization state,
+  deficient-solve policy, and rank threshold.
+- `factors`, `tau`, `jpvt`, `tzfactors`, `tau2`, `rhs`, `work`, `rwork`,
+  `wmin`, `wmax`, `dvec`, `dl`, `du`, `du2`, `band`, `ipiv`, `gbuf`: Reusable
+  implementation buffers. They are exposed as fields for Julia performance,
+  but their layout is not an extension interface; use the public constructors,
+  factorization functions, and query functions instead.
 """
 mutable struct SpecializedQR{T, R}
     status::QRStatus
@@ -1450,7 +1591,7 @@ structuralform(F::SpecializedQR) = F.form
 LinearAlgebra.rank(F::SpecializedQR) = F.rank
 
 """
-    issuccess(F::SpecializedQR) -> Bool
+    LinearAlgebra.issuccess(F::SpecializedQR) -> Bool
 
 Return whether `F` holds a usable QR factorization. Rank deficiency is a valid
 minimum-norm solve, not a failure; only a LAPACK illegal argument (`info != 0`)
@@ -1541,25 +1682,25 @@ for (fname, elty, relty) in (
             info = Ref{BlasInt}()
             lda = max(1, stride(A, 2))
             ccall(
-                (@blasfunc($fname), libblastrampoline), Cvoid,
+                (@lbtfunc($fname), _LBT), Cvoid,
                 (
                     Ref{BlasInt}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ptr{BlasInt},
                     Ptr{$elty}, Ptr{$elty}, Ref{BlasInt}, Ptr{$relty}, Ref{BlasInt},
                 ),
                 m, n, A, lda, jpvt, tau, F.work, BlasInt(-1), F.rwork, info
             )
-            chkargsok(info[])
+            _check_lapack_info(info[])
             lwork = max(1, Int(real(F.work[1])))
             length(F.work) < lwork && _resize!(F.work, lwork)
             ccall(
-                (@blasfunc($fname), libblastrampoline), Cvoid,
+                (@lbtfunc($fname), _LBT), Cvoid,
                 (
                     Ref{BlasInt}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ptr{BlasInt},
                     Ptr{$elty}, Ptr{$elty}, Ref{BlasInt}, Ptr{$relty}, Ref{BlasInt},
                 ),
                 m, n, A, lda, jpvt, tau, F.work, BlasInt(lwork), F.rwork, info
             )
-            chkargsok(info[])
+            _check_lapack_info(info[])
             return F
         end
     else
@@ -1573,25 +1714,25 @@ for (fname, elty, relty) in (
             info = Ref{BlasInt}()
             lda = max(1, stride(A, 2))
             ccall(
-                (@blasfunc($fname), libblastrampoline), Cvoid,
+                (@lbtfunc($fname), _LBT), Cvoid,
                 (
                     Ref{BlasInt}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ptr{BlasInt},
                     Ptr{$elty}, Ptr{$elty}, Ref{BlasInt}, Ref{BlasInt},
                 ),
                 m, n, A, lda, jpvt, tau, F.work, BlasInt(-1), info
             )
-            chkargsok(info[])
+            _check_lapack_info(info[])
             lwork = max(1, Int(real(F.work[1])))
             length(F.work) < lwork && _resize!(F.work, lwork)
             ccall(
-                (@blasfunc($fname), libblastrampoline), Cvoid,
+                (@lbtfunc($fname), _LBT), Cvoid,
                 (
                     Ref{BlasInt}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ptr{BlasInt},
                     Ptr{$elty}, Ptr{$elty}, Ref{BlasInt}, Ref{BlasInt},
                 ),
                 m, n, A, lda, jpvt, tau, F.work, BlasInt(lwork), info
             )
-            chkargsok(info[])
+            _check_lapack_info(info[])
             return F
         end
     end
@@ -1616,7 +1757,7 @@ for (fname, elty) in (
         length(F.work) >= 1 || _resize!(F.work, 1)
         info = Ref{BlasInt}()
         ccall(
-            (@blasfunc($fname), libblastrampoline), Cvoid,
+            (@lbtfunc($fname), _LBT), Cvoid,
             (
                 Ref{UInt8}, Ref{UInt8}, Ref{BlasInt}, Ref{BlasInt}, Ref{BlasInt},
                 Ptr{$elty}, Ref{BlasInt}, Ptr{$elty}, Ptr{$elty}, Ref{BlasInt},
@@ -1624,11 +1765,11 @@ for (fname, elty) in (
             ),
             'L', trans, m, n, k, A, lda, tau, C, ldc, F.work, BlasInt(-1), info, 1, 1
         )
-        chkargsok(info[])
+        _check_lapack_info(info[])
         lwork = max(1, Int(real(F.work[1])))
         length(F.work) < lwork && _resize!(F.work, lwork)
         ccall(
-            (@blasfunc($fname), libblastrampoline), Cvoid,
+            (@lbtfunc($fname), _LBT), Cvoid,
             (
                 Ref{UInt8}, Ref{UInt8}, Ref{BlasInt}, Ref{BlasInt}, Ref{BlasInt},
                 Ptr{$elty}, Ref{BlasInt}, Ptr{$elty}, Ptr{$elty}, Ref{BlasInt},
@@ -1636,7 +1777,7 @@ for (fname, elty) in (
             ),
             'L', trans, m, n, k, A, lda, tau, C, ldc, F.work, BlasInt(lwork), info, 1, 1
         )
-        chkargsok(info[])
+        _check_lapack_info(info[])
         return C
     end
 end
@@ -1654,19 +1795,19 @@ for (fname, elty) in (
         length(F.work) >= 1 || _resize!(F.work, 1)
         info = Ref{BlasInt}()
         ccall(
-            (@blasfunc($fname), libblastrampoline), Cvoid,
+            (@lbtfunc($fname), _LBT), Cvoid,
             (Ref{BlasInt}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ptr{$elty}, Ptr{$elty}, Ref{BlasInt}, Ref{BlasInt}),
             m, n, A, lda, tau, F.work, BlasInt(-1), info
         )
-        chkargsok(info[])
+        _check_lapack_info(info[])
         lwork = max(1, Int(real(F.work[1])))
         length(F.work) < lwork && _resize!(F.work, lwork)
         ccall(
-            (@blasfunc($fname), libblastrampoline), Cvoid,
+            (@lbtfunc($fname), _LBT), Cvoid,
             (Ref{BlasInt}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ptr{$elty}, Ptr{$elty}, Ref{BlasInt}, Ref{BlasInt}),
             m, n, A, lda, tau, F.work, BlasInt(lwork), info
         )
-        chkargsok(info[])
+        _check_lapack_info(info[])
         return A
     end
 end
@@ -1688,7 +1829,7 @@ for (fname, elty) in (
         length(F.work) >= 1 || _resize!(F.work, 1)
         info = Ref{BlasInt}()
         ccall(
-            (@blasfunc($fname), libblastrampoline), Cvoid,
+            (@lbtfunc($fname), _LBT), Cvoid,
             (
                 Ref{UInt8}, Ref{UInt8}, Ref{BlasInt}, Ref{BlasInt}, Ref{BlasInt}, Ref{BlasInt},
                 Ptr{$elty}, Ref{BlasInt}, Ptr{$elty}, Ptr{$elty}, Ref{BlasInt},
@@ -1696,11 +1837,11 @@ for (fname, elty) in (
             ),
             'L', trans, m, n, k, l, A, lda, tau, C, ldc, F.work, BlasInt(-1), info, 1, 1
         )
-        chkargsok(info[])
+        _check_lapack_info(info[])
         lwork = max(1, Int(real(F.work[1])))
         length(F.work) < lwork && _resize!(F.work, lwork)
         ccall(
-            (@blasfunc($fname), libblastrampoline), Cvoid,
+            (@lbtfunc($fname), _LBT), Cvoid,
             (
                 Ref{UInt8}, Ref{UInt8}, Ref{BlasInt}, Ref{BlasInt}, Ref{BlasInt}, Ref{BlasInt},
                 Ptr{$elty}, Ref{BlasInt}, Ptr{$elty}, Ptr{$elty}, Ref{BlasInt},
@@ -1708,7 +1849,7 @@ for (fname, elty) in (
             ),
             'L', trans, m, n, k, l, A, lda, tau, C, ldc, F.work, BlasInt(lwork), info, 1, 1
         )
-        chkargsok(info[])
+        _check_lapack_info(info[])
         return C
     end
 end
@@ -1728,14 +1869,14 @@ for (fname, elty) in (
         ldb = max(1, stride(B, 2))
         info = Ref{BlasInt}()
         ccall(
-            (@blasfunc($fname), libblastrampoline), Cvoid,
+            (@lbtfunc($fname), _LBT), Cvoid,
             (
                 Ref{UInt8}, Ref{UInt8}, Ref{UInt8}, Ref{BlasInt}, Ref{BlasInt},
                 Ptr{$elty}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ref{BlasInt}, Clong, Clong, Clong,
             ),
             uplo, 'N', 'N', nA, nrhs, A, lda, B, ldb, info, 1, 1, 1
         )
-        chkargsok(info[])
+        _check_lapack_info(info[])
         return B
     end
 end
@@ -1755,7 +1896,7 @@ for (fname, elty, relty) in (
         s = Ref{$elty}()
         c = Ref{$elty}()
         ccall(
-            (@blasfunc($fname), libblastrampoline), Cvoid,
+            (@lbtfunc($fname), _LBT), Cvoid,
             (
                 Ref{BlasInt}, Ref{BlasInt}, Ptr{$elty}, Ref{$relty}, Ptr{$elty},
                 Ref{$elty}, Ref{$relty}, Ref{$elty}, Ref{$elty},
@@ -1795,7 +1936,7 @@ for (geqp3f, ormqrf, tzrzff, ormrzf, elty, relty) in (
             if cmplx
                 quote
                     ccall(
-                        (@blasfunc($geqp3f), libblastrampoline), Cvoid,
+                        (@lbtfunc($geqp3f), _LBT), Cvoid,
                         (
                             Ref{BlasInt}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ptr{BlasInt},
                             Ptr{$elty}, Ptr{$elty}, Ref{BlasInt}, Ptr{$relty}, Ref{BlasInt},
@@ -1806,7 +1947,7 @@ for (geqp3f, ormqrf, tzrzff, ormrzf, elty, relty) in (
             else
                 quote
                     ccall(
-                        (@blasfunc($geqp3f), libblastrampoline), Cvoid,
+                        (@lbtfunc($geqp3f), _LBT), Cvoid,
                         (
                             Ref{BlasInt}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ptr{BlasInt},
                             Ptr{$elty}, Ptr{$elty}, Ref{BlasInt}, Ref{BlasInt},
@@ -1821,7 +1962,7 @@ for (geqp3f, ormqrf, tzrzff, ormrzf, elty, relty) in (
         rhs = _ensure_qr_rhs!(F, max(m, n), 1)
         ldc = max(1, stride(rhs, 2))
         ccall(
-            (@blasfunc($ormqrf), libblastrampoline), Cvoid,
+            (@lbtfunc($ormqrf), _LBT), Cvoid,
             (
                 Ref{UInt8}, Ref{UInt8}, Ref{BlasInt}, Ref{BlasInt}, Ref{BlasInt},
                 Ptr{$elty}, Ref{BlasInt}, Ptr{$elty}, Ptr{$elty}, Ref{BlasInt},
@@ -1835,13 +1976,13 @@ for (geqp3f, ormqrf, tzrzff, ormrzf, elty, relty) in (
             ldt = max(1, stride(tzf, 2))
             tau2 = _resize!(F.tau2, mn)
             ccall(
-                (@blasfunc($tzrzff), libblastrampoline), Cvoid,
+                (@lbtfunc($tzrzff), _LBT), Cvoid,
                 (Ref{BlasInt}, Ref{BlasInt}, Ptr{$elty}, Ref{BlasInt}, Ptr{$elty}, Ptr{$elty}, Ref{BlasInt}, Ref{BlasInt}),
                 mn, n, tzf, ldt, tau2, F.work, BlasInt(-1), info
             )
             lwork = max(lwork, Int(real(F.work[1])))
             ccall(
-                (@blasfunc($ormrzf), libblastrampoline), Cvoid,
+                (@lbtfunc($ormrzf), _LBT), Cvoid,
                 (
                     Ref{UInt8}, Ref{UInt8}, Ref{BlasInt}, Ref{BlasInt}, Ref{BlasInt}, Ref{BlasInt},
                     Ptr{$elty}, Ref{BlasInt}, Ptr{$elty}, Ptr{$elty}, Ref{BlasInt},
@@ -2555,22 +2696,46 @@ function _qr_solve!(x::AbstractVecOrMat, F::SpecializedQR{T}, b::AbstractVecOrMa
     return x
 end
 
+# Apply the adjoint of the Householder product stored by the public `qr` API.
+# This keeps the generic path independent of `LinearAlgebra.QRPackedQ`, which
+# is an implementation type rather than a public construction interface.
+function _apply_q_adjoint!(
+        B::AbstractMatrix{T}, factors::AbstractMatrix{T}, tau::AbstractVector{T},
+        m::Int
+    ) where {T}
+    @inbounds for k in eachindex(tau)
+        τ = conj(tau[k])
+        for j in axes(B, 2)
+            projection = B[k, j]
+            for i in (k + 1):m
+                projection += conj(factors[i, k]) * B[i, j]
+            end
+            projection *= τ
+            B[k, j] -= projection
+            for i in (k + 1):m
+                B[i, j] -= factors[i, k] * projection
+            end
+        end
+    end
+    return B
+end
+
 # Generic: rank-truncated basic solve (Julia's generic QRPivoted ldiv! is NOT
 # rank-safe and blows up on singular input, so we do our own rank truncation).
 function _qr_solve!(x::AbstractVecOrMat, F::SpecializedQR{T}, b::AbstractVecOrMat) where {T}
     m, n, r = F.m, F.n, F.rank
     fill!(x, zero(T))
     r == 0 && return x
-    Q = LinearAlgebra.QRPackedQ(F.factors, F.tau)
-    qtb = Q' * b
+    qtb = _load_rhs!(F, b)
+    _apply_q_adjoint!(qtb, F.factors, F.tau, m)
     Rtri = UpperTriangular(view(F.factors, 1:r, 1:r))
     if b isa AbstractVector
-        y = Rtri \ view(qtb, 1:r)
+        y = Rtri \ view(qtb, 1:r, 1)
         @inbounds for i in 1:r
             x[F.jpvt[i]] = y[i]
         end
     else
-        y = Rtri \ qtb[1:r, :]
+        y = Rtri \ view(qtb, 1:r, :)
         @inbounds for c in axes(x, 2), i in 1:r
             x[F.jpvt[i], c] = y[i, c]
         end

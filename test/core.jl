@@ -703,6 +703,20 @@ _reltol(::Type{T}) where {T} = (real(T) === Float32 ? 1.0f-3 : 1.0e-8)
         let A = BigFloat.(randn(6, 3)), b = BigFloat.(randn(6))
             @test norm(specializingqr(A) \ b - (A \ b)) < 1.0e-60
         end
+        # Complex generic QR uses the same non-LAPACK factorization and solve path.
+        # Keep this deterministic case as a regression for the pivoted complex path.
+        let A = Complex{BigFloat}.(
+                [1 2 3; 2 -1 1; -1 3 2; 4 1 -2; 3 -2 1],
+                [2 -1 1; -3 2 4; 1 0 -2; 2 3 1; -1 4 2],
+            ), b = Complex{BigFloat}.([1, -2, 3, 4, -1], [2, 1, -3, 0, 4])
+            F = specializingqr(A)
+            x = F \ b
+            reference = qr(A, ColumnNorm()) \ b
+            @test F isa SpecializedQR{Complex{BigFloat}, BigFloat}
+            @test rank(F) == 3
+            @test issuccess(F)
+            @test norm(x - reference) < big"1e-60"
+        end
         # zero matrix: zeros, no throw
         let F = specializingqr(zeros(BigFloat, 3, 3))
             @test iszero(F \ BigFloat.(randn(3)))
